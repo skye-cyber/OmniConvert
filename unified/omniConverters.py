@@ -64,12 +64,14 @@ from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.gridlayout import GridLayout
 from kivy.uix.label import Label
 from m4a_converter import _m4a_main_
-from moviepy import VideoFileClip
 from openpyxl import load_workbook
 from pdf2docx import parse
 from pdf2image import convert_from_path
 from PIL import Image
 from pptx import Presentation
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
+from kivy.logger import Logger as logger
+from kivy.utils import get_color_from_hex
 
 # from pydub import AudioSegment
 from reportlab.lib.pagesizes import letter
@@ -77,6 +79,7 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate
 from rich.progress import Progress
 from tqdm import tqdm
 from kivymd.uix.label import MDLabel
+from kivy.properties import ObjectProperty
 
 _ext_word = ["doc", "docx"]
 _ext_ppt_ = ["ppt", "pptx"]
@@ -159,9 +162,10 @@ class FileConverter:
                 print("\nQuit❕")
                 exit(1)
             except Exception as e:
+                err = str(e)
                 Clock.schedule_once(
                     lambda dt: self.callback(
-                        item=Label(text=str(e), padding=5, color=Red), error=True
+                        item=Label(text=err, padding=5, color=Red), error=True
                     )
                 )
                 # Clock.schedule_once(lambda dt: self._force_ui_update(), 0.5)
@@ -901,7 +905,7 @@ class FileConverter:
                 Clock.schedule_once(
                     lambda dt: self.callback(
                         item=Label(
-                            text="Done ✅",
+                            text="Done",
                             size_hint_y=None,
                             color=Green,
                             bold=True,
@@ -1112,7 +1116,7 @@ class FileConverter:
         """
         Logs and displays a success message.
         """
-        logger.info(f"{DGREEN}Success👨‍💻✅{RESET}")
+        logger.info(f"{DGREEN}Success👨‍💻{RESET}")
         self._log_and_display_message("Success", Green)
 
     def _handle_exception(self, e, detailed_error_prefix=""):
@@ -1406,14 +1410,15 @@ class FileConverter:
             )
 
 
-class ScannerBot:
+class FileScanner:
     """
     Implementation of scanning to extract data from pdf files and images
     input_file -> file to be scanned pdf,image
     """
 
-    def __init__(self, callback, **kwargs):
+    def __init__(self, callback, callback2, **kwargs):
         self.callback = callback
+        self.callback2 = callback2
 
     def preprocess(self):
         files_to_process = []
@@ -1461,7 +1466,7 @@ class ScannerBot:
 
     def scanAsImgs(self):
         file = self.input_file
-        mc = FBot()
+        mc = FileConverter()
         img_objs = mc.pdf2image(file)
         # print(img_objs)
         from OCRTextExtractor import ExtractText
@@ -1517,12 +1522,9 @@ class ScannerBot:
 
 
 class TextToSpeechConverter:
-    def __init__(self, callback, **kwargs):
+    def __init__(self, callback, callback2, **kwargs):
         self.callback = callback
-
-    from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
-    from kivy.logger import Logger as logger
-    from kivy.utils import get_color_from_hex
+        self.callback2 = callback2
 
     Yellow = get_color_from_hex("#F7E01C")
 
@@ -1814,29 +1816,120 @@ class TextToSpeechConverter:
 
 
 class VideoConverter:
-    def __init__(self, callback, **kwargs):
+    def __init__(self, callback, PEDisplay, **kwargs):
         self.callback = callback
+        self.PEDisplay = PEDisplay
+        self.video_progress = ObjectProperty(None)  # reference to the progress bar.
 
-    def preprocess(self):
+    @staticmethod
+    def preprocess(input_file):
         files_to_process = []
 
-        if os.path.isfile(self.input_file):
-            files_to_process.append(self.input_file)
-        elif os.path.isdir(self.input_file):
-            if os.listdir(self.input_file) is None:
+        if os.path.isfile(input_file):
+            files_to_process.append(input_file)
+        elif os.path.isdir(input_file):
+            if os.listdir(input_file) is None:
                 print(f"{RED}Cannot work with empty folder{RESET}")
                 sys.exit(1)
-            for file in os.listdir(self.input_file):
-                file_path = os.path.join(self.input_file, file)
+            for file in os.listdir(input_file):
+                file_path = os.path.join(input_file, file)
                 if os.path.isfile(file_path):
                     files_to_process.append(file_path)
 
         return files_to_process
 
-    def CONVERT_VIDEO(self):
+    def _handle_exception(self, e, detailed_error_prefix=""):
+        """
+        Handles exceptions during the PowerPoint to text conversion process.
+        """
+        err_msg = str(e)
+        logger.error(f"{detailed_error_prefix}{RED}{e}{RESET}")
+        self._log_and_display_error_message(err_msg)
+        return None
+
+    def _log_and_display_error_message(self, error_message):
+        """
+        Logs and displays an error message using a callback.
+        """
+        Clock.schedule_once(
+            lambda dt: self.callback(
+                item=Label(text=error_message, size_hint_y=None, color=Red, height=40),
+                log=True,  # Keep log as True for error logging
+            )
+        )
+
+    def addProgress(self):
+        """
+        Logs and displays an error message using a callback.
+        """
+        Clock.schedule_once(lambda dt: self.PEDisplay(_type="circular", _label=True))
+
+    def update_progress(self, percent="", current=None, total=None):
+        progress = (
+            percent
+            if percent
+            else ((current / total) * 100)
+            if current and total
+            else 0
+        )
+        Clock.schedule_once(lambda dt: self.PEDisplay(update=True, progress=progress))
+
+    def get_total_frames(self, input_file):
         try:
-            input_list = self.preprocess()
-            out_f = self.out_format.upper()
+            cap = cv2.VideoCapture(input_file)
+            if not cap.isOpened():
+                print(f"Error: Could not open video file {input_file}")
+                return None
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            cap.release()
+            return total_frames
+        except Exception as e:
+            print(f"Error getting total frames: {e}")
+            return None
+
+    def query_progress(self, process):
+        for line in process.stdout:
+            line = line.strip()
+            # print(f"FFmpeg stdout: {line}")
+
+            match_frame = re.search(r"frame=\s*(\d+)", line)
+            match_progress = re.search(r"progress=([a-z]+)", line)
+
+            if match_frame:
+                frame = int(match_frame.group(1))
+                if self.total_frames > 0:
+                    progress_percent = (frame / self.total_frames) * 100
+                    print(f"{BWHITE}Progress: {GREEN}{progress_percent:.2f}{RESET}")
+                    Clock.schedule_once(
+                        lambda dt: self.PEDisplay(
+                            update=True, progress=progress_percent
+                        )
+                    )
+                if match_progress and match_progress.lower() == "end":
+                    Clock.schedule_once(
+                        lambda dt: self.PEDisplay(update=True, progress=100)
+                    )
+                    Clock.schedule_once(
+                        lambda dt: self.callback(
+                            item="File conversion successful.", log=True
+                        )
+                    )
+
+            """
+            if match_progress and progress_percent == "end":
+                Clock.schedule_once(
+                    lambda dt: self.update_progress(percent=100),
+                    0,
+                )"""
+        """
+        for line in process.stderr:
+            line = line.strip()
+            print(f"FFmpeg stderr: {line}")
+        """
+
+    def CONVERT_VIDEO(self, file, out_f):
+        try:
+            input_list = self.preprocess(file)
             input_list = [
                 item
                 for item in input_list
@@ -1844,11 +1937,10 @@ class VideoConverter:
             ]
             print(f"{DYELLOW}Initializing conversion..{RESET}")
 
-            for file in tqdm(input_list):
+            for file in input_list:
                 if out_f.upper() in Video_codecs.keys():
                     _, ext = os.path.splitext(file)
                     output_filename = _ + "." + out_f.lower()
-                    # print(output_filename)
                 elif (
                     out_f.upper() in SUPPORTED_VIDEO_FORMATS
                     and not out_f.upper() in Video_codecs.keys()
@@ -1856,42 +1948,88 @@ class VideoConverter:
                     print(
                         f"{RED}Unsupported output format --> Pending Implementation{RESET}"
                     )
-                    sys.exit(1)
+                    self._handle_exception(
+                        "Unsupported output format --> Pending Implementation"
+                    )
+                    return
                 else:
                     print(f"{RED}Unsupported output format{RESET}")
-                    sys.exit(1)
+                    self._handle_exception(
+                        "Unsupported output format --> Pending Implementation"
+                    )
+                    return
 
-                """Load the video file"""
-                print(f"{DBLUE}Load file{RESET}")
-                video = VideoFileClip(file)
-                """Export the video to a different format"""
                 print(f"{DMAGENTA}Converting file to {output_filename}{RESET}")
-                video.write_videofile(output_filename, codec=Video_codecs[out_f])
-                """Close the video file"""
-                print(f"{DGREEN}Done{RESET}")
-                video.close()
+
+                # Add progress bar
+                self.addProgress()
+                try:
+                    self.total_frames = self.get_total_frames(file)
+
+                    command = [
+                        "ffmpeg",
+                        "-y",
+                        "-i",
+                        file,
+                        "-c:v",
+                        Video_codecs.get(out_f.upper()),
+                        "-progress",
+                        "pipe:1",
+                        output_filename,
+                    ]
+
+                    print(f"Command:{DBLUE}{command}{RESET}")
+
+                    process = subprocess.Popen(
+                        command,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        universal_newlines=True,
+                        bufsize=1,  # Line-buffered output
+                    )
+                    self.query_progress(process)
+                    Thread(target=self.update_progress).start()
+                    process.wait()
+                except subprocess.CalledProcessError as e:
+                    print(f"FFmpeg error: {e}")
+                    self._handle_exception(e)
+                except Exception as e:
+                    print(f"An error occurred: {e}")
+                    self._handle_exception(e)
+
         except KeyboardInterrupt:
             print("\nQuit❕")
-            sys.exit(1)
+            return
+        except FileNotFoundError:
+            self._handle_exception(
+                "FFmpeg not found. Please ensure FFmpeg is installed and in your PATH."
+            )
+            print(
+                "FFmpeg not found. Please ensure FFmpeg is installed and in your PATH."
+            )
+
         except Exception as e:
-            print(e)
+            print(f"An error occurred:{e}")
+            self._handle_exception(e)
 
 
 class AudioConverter:
-    def __init__(self, callback, **kwargs):
+    def __init__(self, callback, callback2, **kwargs):
         self.callback = callback
+        self.callback2 = callback2
 
-    def preprocess(self):
+    @staticmethod
+    def preprocess(input_file):
         files_to_process = []
 
-        if os.path.isfile(self.input_file):
-            files_to_process.append(self.input_file)
-        elif os.path.isdir(self.input_file):
-            if os.listdir(self.input_file) is None:
+        if os.path.isfile(input_file):
+            files_to_process.append(input_file)
+        elif os.path.isdir(input_file):
+            if os.listdir(input_file) is None:
                 print(f"{RED}Cannot work with empty folder{RESET}")
                 sys.exit(1)
-            for file in os.listdir(self.input_file):
-                file_path = os.path.join(self.input_file, file)
+            for file in os.listdir(input_file):
+                file_path = os.path.join(input_file, file)
                 if os.path.isfile(file_path):
                     files_to_process.append(file_path)
 
@@ -1899,7 +2037,7 @@ class AudioConverter:
 
     def pydub_conv(self, obj, out_format):
         try:
-            input_list = [obj]
+            input_list = self.preprocess(obj)
             out_f = out_format
             input_list = [
                 item
@@ -1949,21 +2087,23 @@ class AudioConverter:
 
 
 class ImageConverter:
-    def __init__(self, callback, **kwargs):
+    def __init__(self, callback, callback2, **kwargs):
         self.callback = callback
+        self.callback2 = callback2
 
-    def preprocess(self):
+    @staticmethod
+    def preprocess(input_file):
         try:
             files_to_process = []
 
-            if os.path.isfile(self.input_file):
-                files_to_process.append(self.input_file)
-            elif os.path.isdir(self.input_file):
-                if os.listdir(self.input_file) is None:
-                    print("Cannot work with empty folder")
+            if os.path.isfile(input_file):
+                files_to_process.append(input_file)
+            elif os.path.isdir(input_file):
+                if os.listdir(input_file) is None:
+                    print(f"{RED}Cannot work with empty folder{RESET}")
                     sys.exit(1)
-                for file in os.listdir(self.input_file):
-                    file_path = os.path.join(self.input_file, file)
+                for file in os.listdir(input_file):
+                    file_path = os.path.join(input_file, file)
                     if os.path.isfile(file_path):
                         files_to_process.append(file_path)
 
@@ -1972,10 +2112,9 @@ class ImageConverter:
             print("File not found❕")
             sys.exit(1)
 
-    def convert_image(self, file):
+    def convert_image(self, file, out_f):
         try:
-            input_list = self.preprocess()
-            out_f = self.out_format.upper()
+            input_list = self.preprocess(file)
             input_list = [
                 item
                 for item in input_list

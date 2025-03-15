@@ -43,7 +43,8 @@ from kivymd.uix.button import (
 )
 from kivymd.uix.button import MDTextButton
 from kivy.core.window import Window
-from kivy.graphics import Canvas, Color, Rectangle, RoundedRectangle
+from kivy.core.text import Label as CoreLabel
+from kivy.graphics import Canvas, Color, Rectangle, RoundedRectangle, texture
 from kivy.uix.accordion import Accordion, AccordionItem
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
@@ -52,7 +53,6 @@ from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.gridlayout import GridLayout
 from kivy.uix.image import Image
 from kivy.uix.label import Label
-from kivy.lang import Builder
 from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
 from kivymd.uix.scrollview import MDScrollView
@@ -60,7 +60,10 @@ from kivy.uix.spinner import Spinner
 from kivy.uix.treeview import TreeView, TreeViewLabel
 from kivy.uix.anchorlayout import AnchorLayout
 from kivymd.uix.card import MDCard
-
+from kivy.uix.progressbar import ProgressBar
+from kivymd.uix.progressbar import MDProgressBar
+from kivy.uix.textinput import TextInput
+import numpy as np
 
 _filters = [None]
 
@@ -70,23 +73,23 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
         super(Main, self).__init__(**kwargs)
         self.orientation = "vertical"
         # Initialize FBot with the current instance of Main
-        from filemacBots import (
+        from omniConverters import (
             AudioConverter,
             FileConverter,
             TextToSpeechConverter,
             ImageConverter,
-            ScannerBot,
+            FileScanner,
             VideoConverter,
         )
 
         self.FileConverter = FileConverter
         self.TextToSpeechConverter = TextToSpeechConverter
-        self.scannerBot = ScannerBot
+        self.FileScanner = FileScanner
         self.AudioConverter = AudioConverter
         self.VideoConverter = VideoConverter
         self.ImageConverter = ImageConverter
         self.popup_active = False  # Initialize a flag for popup state content
-        self.bg_buttons = os.listdir("./src/")
+        self.bg_buttons = os.listdir("../src/")
 
         # Define themes
         self.set_theme()
@@ -215,11 +218,14 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
         }
 
         self.audio_filter_map = {
-            val: [f".{val.lower()}"] for val in SUPPORTED_AUDIO_FORMATS_INPUT
+            val.lower(): [f"*.{val.lower()}"] for val in SUPPORTED_AUDIO_FORMATS_INPUT
         }
-        self.video_filter_map = {val: [f".{val}"] for val in SUPPORTED_VIDEO_FORMATS}
+        self.video_filter_map = {
+            val.lower(): [f"*.{val.lower()}"] for val in SUPPORTED_VIDEO_FORMATS
+        }
         self.image_filter_map = {
-            val: [f".{val}"] for val in SUPPORTED_IMAGE_FORMATS.values()
+            val.lower(): [f"*.{val.lower()}"]
+            for val in SUPPORTED_IMAGE_FORMATS.values()
         }
 
         check = {
@@ -228,7 +234,7 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
             "video_filter_map": self.video_filter_map,
             "image_filter_map": self.image_filter_map,
         }
-
+        print(obj, check.get(obj))
         return check.get(obj)
 
     def method_mapper(self, res):
@@ -245,7 +251,9 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
                 "csv": self.FileConverter(
                     self.IEHandler, self.add_log_label
                 ).convert_xls_to_csv,
-                "audio": self.TextToSpeechConverter(self.IEHandler).audiofy,
+                "audio": self.TextToSpeechConverter(
+                    self.IEHandler, self.add_log_label
+                ).audiofy,
                 "docx": self.FileConverter(
                     self.IEHandler, self.add_log_label
                 ).convert_xls_to_word,
@@ -262,7 +270,9 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
                 "pdf": self.FileConverter(
                     self.IEHandler, self.add_log_label
                 ).convert_word_to_pdf,
-                "audio": self.TextToSpeechConverter(self.IEHandler).audiofy,
+                "audio": self.TextToSpeechConverter(
+                    self.IEHandler, self.add_log_label
+                ).audiofy,
                 "pptx": self.FileConverter(
                     self.IEHandler, self.add_log_label
                 ).word_to_pptx,
@@ -274,14 +284,17 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
                 "word": self.FileConverter(
                     self.IEHandler, self.add_log_label
                 ).convert_pdf_to_word,
-                "LongImage": self.scannerBot(self.IEHandler).scanAsLongImg,
-                "audio": self.TextToSpeechConverter(self.IEHandler).audiofy,
+                "audio": self.TextToSpeechConverter(
+                    self.IEHandler, self.add_log_label
+                ).audiofy,
                 "image": self.FileConverter(
                     self.IEHandler, self.add_log_label
                 ).pdf2image,
             },
             "text": {
-                "audio": self.TextToSpeechConverter(self.IEHandler).audiofy,
+                "audio": self.TextToSpeechConverter(
+                    self.IEHandler, self.add_log_label
+                ).audiofy,
                 "pdf": self.FileConverter(
                     self.IEHandler, self.add_log_label
                 ).txt_to_pdf,
@@ -299,6 +312,14 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
             },
         }
 
+        self.scanner = {
+            "pdf": {
+                "LongImage": self.FileScanner(
+                    self.IEHandler, self.add_log_label
+                ).scanAsLongImg,
+            }
+        }
+
         # Initialize the nested dictionary
         self.audio_method_map = {}
         for input_format in SUPPORTED_AUDIO_FORMATS_INPUT:
@@ -307,14 +328,18 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
                 if input_format != output_format:
                     self.audio_method_map[input_format.lower()][
                         output_format.lower()
-                    ] = self.AudioConverter(self.IEHandler).pydub_conv
+                    ] = self.AudioConverter(
+                        self.IEHandler, self.add_log_label
+                    ).pydub_conv
 
         # Initialize the nested dictionary
         self.video_method_map = {}
         for key in SUPPORTED_VIDEO_FORMATS:
             # Create a dictionary for each key that contains all other values
             self.video_method_map[key.lower()] = {
-                other_key.lower(): self.VideoConverter(self.IEHandler).CONVERT_VIDEO
+                other_key.lower(): self.VideoConverter(
+                    self.IEHandler, self.ProgressDisplay
+                ).CONVERT_VIDEO
                 for other_key in SUPPORTED_VIDEO_FORMATS
                 if other_key != key
             }
@@ -324,7 +349,9 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
         for key in SUPPORTED_IMAGE_FORMATS:
             # Create a dictionary for each key that contains all other values
             self.image_method_map[key.lower()] = {
-                other_key: self.ImageConverter(self.IEHandler).convert_image
+                other_key: self.ImageConverter(
+                    self.IEHandler, self.add_log_label
+                ).convert_image
                 for other_key in SUPPORTED_IMAGE_FORMATS
                 if other_key != key
             }
@@ -361,7 +388,7 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
                 for label in self.method_mapper("doc_method_map").keys():
                     child = tree_view.add_node(TreeViewLabel(text=label), node)
                     child.bind(on_touch_down=self.target_constructor)
-                self.log_layout.add_widget(
+                self.terminal_layout.add_widget(
                     Label(
                         text=f"selected {text}",
                         size_hint_y=None,
@@ -375,7 +402,7 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
                 for label in self.method_mapper("video_method_map").keys():
                     child = tree_view.add_node(TreeViewLabel(text=label.lower()), node)
                     child.bind(on_touch_down=self.target_constructor)
-                self.log_layout.add_widget(
+                self.terminal_layout.add_widget(
                     Label(
                         text=f"selected {text}",
                         size_hint_y=None,
@@ -389,7 +416,7 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
                 for label in self.method_mapper("audio_method_map").keys():
                     child = tree_view.add_node(TreeViewLabel(text=label.lower()), node)
                     child.bind(on_touch_down=self.target_constructor)
-                self.log_layout.add_widget(
+                self.terminal_layout.add_widget(
                     Label(
                         text=f"selected {text}",
                         size_hint_y=None,
@@ -403,7 +430,7 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
                 for label in self.method_mapper("image_method_map").keys():
                     child = tree_view.add_node(TreeViewLabel(text=label.lower()), node)
                     child.bind(on_touch_down=self.target_constructor)
-                self.log_layout.add_widget(
+                self.terminal_layout.add_widget(
                     Label(
                         text=f"selected {text}",
                         size_hint_y=None,
@@ -417,7 +444,7 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
                 for label in self.method_mapper("doc_method_map").keys():
                     child = tree_view.add_node(TreeViewLabel(text=label.lower()), node)
                     child.bind(on_touch_down=self.target_constructor)
-                self.log_layout.add_widget(
+                self.terminal_layout.add_widget(
                     Label(
                         text=f"selected {text}",
                         size_hint_y=None,
@@ -427,7 +454,7 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
                 )
 
         except AttributeError:
-            self.log_layout.add_widget(
+            self.terminal_layout.add_widget(
                 Label(
                     text=f"Target format {text}",
                     size_hint_y=None,
@@ -474,24 +501,19 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
             self._from = instance.text
             op_method_mapper = {
                 "Document": "doc_method_map",
-                "Video": "audio_method_map",
-                "Audio": "video_method_map",
+                "Video": "video_method_map",
+                "Audio": "audio_method_map",
                 "Image": "image_method_map",
             }
 
             self.target_format = self.method_mapper(
                 op_method_mapper.get(self.op_type)
-            ).get(instance.text)
-
-            print(
-                instance.text,
-                self.method_mapper(op_method_mapper.get(self.op_type)).keys(),
-                self.target_format,
-            )
+            ).get(instance.text.lower())
 
             node = tree_view.add_node(
                 TreeViewLabel(text=f"Convert: {instance.text} to ??")
             )
+
             for label in self.target_format.keys():
                 child = tree_view.add_node(TreeViewLabel(text=label), node)
                 child.bind(on_touch_down=self.on_node_select)
@@ -501,10 +523,10 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
                 color=Green,
                 height=40,
             )
-            self.log_layout.add_widget(self.operation)
+            self.terminal_layout.add_widget(self.operation)
 
         except AttributeError:
-            self.log_layout.add_widget(
+            self.terminal_layout.add_widget(
                 Label(text="Target format ???", size_hint_y=None, color=Blue, height=40)
             )
         finally:
@@ -520,9 +542,7 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
                 self.target_opt_popup.height = min(
                     max(400, content_height), Window.size[1]
                 )
-                print(
-                    f"Content: {content_height - 30} -> popup:{self.target_opt_popup.height} window_size: {Window.size[1]}"
-                )
+                # print(f"Content: {content_height - 30} -> popup:{self.target_opt_popup.height} window_size: {Window.size[1]}")
 
             self.target_opt_popup.open()
             # Adjust height as nodes are added
@@ -532,19 +552,31 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
         global _filters
         op_mapper = {
             "Document": "doc_filter_map",
-            "Video": "audio_filter_map",
-            "Audio": "video_filter_map",
+            "Video": "video_filter_map",
+            "Audio": "audio_filter_map",
             "Image": "image_filter_map",
         }
 
         _filters = self.filter_mapper(op_mapper.get(self.op_type)).get(self._from)
+
         self.target_opt_popup.dismiss()
+        self.output_format = instance.text.lower()
         print(f"Target format: {instance.text}")
         print(f"Target method:  {self.target_format.get(instance.text)}")
         # init.get(self.op_type)()  #= init.get(self.op_type)()
-        self.show_filechooser(
-            callback=lambda file: self.target_format.get(instance.text.lower())(file)
-        )
+        if self.op_type != "Document":
+            print("Not a Document")
+            self.show_filechooser(
+                callback=lambda file, output_format: self.target_format.get(
+                    instance.text.lower()
+                )(file, output_format)
+            )
+        else:
+            self.show_filechooser(
+                callback=lambda file: self.target_format.get(instance.text.lower())(
+                    file
+                )
+            )
 
         self.operation.text = f"{self.operation.text} to {instance.text.lower()}"
         if instance.collide_point(*touch.pos):
@@ -588,7 +620,7 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
         if update:
             self.progress_label.text = str(obj)
         elif add:
-            self.log_layout.add_widget(obj)
+            self.terminal_layout.add_widget(obj)
 
     def add_log_label(self):
         self.progress_label = MDLabel(
@@ -599,7 +631,27 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
             text_color=Yellow,
             height=40,
         )
-        self.log_layout.add_widget(self.progress_label)
+        self.terminal_layout.add_widget(self.progress_label)
+
+    def ProgressDisplay(self, update=False, _type="circular", progress=0, _label=False):
+        if not update:
+            if _label:
+                self.add_log_label()
+            if _type == "simple":
+                self.progress_bar = ProgressBar(
+                    max=100,
+                    value=0,
+                    size_hint=(1, None),
+                    height=40,
+                )
+            if _type == "circular":
+                self.progress_bar = MDProgressBar(
+                    max=100, size_hint=(1, None), size=(100, 100), value=0
+                )
+            self.terminal_layout.add_widget(self.progress_bar)  # Add the progress bar
+        else:
+            self.progress_label.text = f"Progress: [b]{int(progress)}%[/b]"
+            self.progress_bar.value = progress
 
     def create_error_box(self):
         self.error_box = FloatLayout()
@@ -609,7 +661,7 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
             self.rect = Rectangle(
                 size=self.update_error_box.size, pos=self.update_error_box.pos
             )
-        self.log_layout.add_widget(self.error_box)
+        self.terminal_layout.add_widget(self.error_box)
 
     def update_error_box(self, instance):
         self.rect.pos = instance.pos
@@ -693,7 +745,11 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
         float_layout = FloatLayout()
 
         # Background image for the overall layout (if needed)
-        background = Image(source="image.jpg", allow_stretch=True, keep_ratio=False)
+        background = Image(
+            source="../src/images/156776-colorfulness-eye-purple-art-gas-1920x1080.jpg",
+            allow_stretch=True,
+            keep_ratio=False,
+        )
         float_layout.add_widget(background)
 
         # Creating accordion navigation menu
@@ -706,7 +762,7 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
         self.home = AccordionItem(title="Home", size_hint=(1, 1))
         home_float_layout = FloatLayout()
         home_background = Image(
-            source="close-up-smartphone-warcall-io-telephone.jpg",
+            source="../src/images/150931-psychedelic-art-green-pattern-purple-fractal-1920x1080.jpg",
             allow_stretch=True,
             keep_ratio=False,
         )
@@ -749,7 +805,9 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
         self.conversion = AccordionItem(title="Conversion", size_hint=(1, 1))
         conversion_float_layout = FloatLayout()
         conversion_background = Image(
-            source="image.jpg", allow_stretch=True, keep_ratio=False
+            source="../src/images/156776-colorfulness-eye-purple-art-gas-1920x1080.jpg",
+            allow_stretch=True,
+            keep_ratio=False,
         )
         conversion_float_layout.add_widget(conversion_background)
 
@@ -812,63 +870,129 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
         # Add conversion AccordionItem to the accordion
         self.accordion.add_widget(self.conversion)
 
-        # .....................................................................#
-        # Create Logs AccordionItem with unique background
-        self.log = AccordionItem(title="Logs", size_hint=(1, 1))
-        log_float_layout = FloatLayout()
+        # Add terminal to Accordion
+        self.add_widget(self.createTerminal())
 
-        # Add background image
-        log_background = Image(
-            source="atmosphere-colorfulness-azure-orange-red.jpg",
-            allow_stretch=True,
-            keep_ratio=False,
+    def createTerminal(self):
+        self.terminal = AccordionItem(title="Terminal", size_hint=(1, 1))
+        self.terminal_float_layout = FloatLayout(size_hint=(1, 1))
+        self.terminal_scroll_view = MDScrollView(
+            size_hint=(1, 1), pos_hint={"x": 0, "y": 0}
         )
-        log_float_layout.add_widget(log_background)
+        self.terminal_layout = GridLayout(
+            cols=1, size_hint_y=None, padding=2, spacing=2
+        )
+        self.terminal_layout.bind(minimum_height=self.terminal_layout.setter("height"))
+        self.gradient_texture = (
+            self._create_gradient_texture()
+        )  # place holder, remove or implement.
 
-        # Create a ScrollView for the log section
-        log_scroll_view = MDScrollView(size_hint=(1, 1), pos_hint={"x": 0, "y": 0})
+        with self.terminal_float_layout.canvas.before:
+            Color(0, 0, 0, 1)  # black background
+            self.rect = Rectangle(
+                size=self.terminal_float_layout.size, pos=self.terminal_float_layout.pos
+            )
 
-        # Create a GridLayout for log items, size_hint_y=None allows it to expand dynamically
-        self.log_layout = GridLayout(cols=1, size_hint_y=None, padding=2, spacing=2)
-        self.log_layout.bind(minimum_height=self.log_layout.setter("height"))
+        self.terminal_float_layout.bind(
+            size=self._update_terminal_rect, pos=self._update_terminal_rect
+        )
+        self.terminal_float_layout.add_widget(self.terminal_scroll_view)
+        self.terminal_scroll_view.add_widget(self.terminal_layout)
+        self.terminal.add_widget(self.terminal_float_layout)
+        self.accordion.add_widget(self.terminal)
 
-        # Add log items dynamically (as an example)
-        # Add the GridLayout to the ScrollView
-        log_scroll_view.add_widget(self.log_layout)
-
-        # Add ScrollView to the FloatLayout
-        log_float_layout.add_widget(log_scroll_view)
-
-        # Add FloatLayout to the log AccordionItem
-        self.log.add_widget(log_float_layout)
-
-        # Add log AccordionItem to the accordion
-        self.accordion.add_widget(self.log)
-
-        # .....................................................................#
-        # Add the accordion to the float layout
+        float_layout = FloatLayout()
         float_layout.add_widget(self.accordion)
+        self.add_terminal_text()
+        return float_layout
 
-        # Add to main window
-        self.add_widget(float_layout)
+    def add_terminal_text(self):
+        self.terminal_input = TerminalInput(
+            font_name="FreeMono",
+            padding=10,
+            multiline=True,
+            cursor_color=(1, 1, 1, 1),  # White cursor
+            foreground_color=(0, 1, 0, 1),  # Green text
+            background_color=(1, 1, 1, 1),  # Black background
+            size_hint_y=None,
+            height=100,  # Initial height
+        )
+
+        self.terminal_layout.add_widget(self.terminal_input)
 
     def open_home_accordion(self, instance):
         self.home.collapse = False
         self.conversion.collapse = True
-        self.log.collapse = True
+        self.terminal.collapse = True
 
     def open_conversion_accordion(self, instance):
         self.home.collapse = True
         self.conversion.collapse = False
-        self.log.collapse = True
+        self.terminal.collapse = True
 
     def open_log_accordion(self, instance):
         self.home.collapse = True
         self.conversion.collapse = True
-        self.log.collapse = False
+        self.terminal.collapse = False
 
     def open_settings(self, instance):
         pass
+
+    def hex_to_rgb(self, hex_color):
+        hex_color = hex_color.lstrip("#")
+        return tuple(int(hex_color[i : i + 2], 16) / 255.0 for i in (0, 2, 4))
+
+    def _update_terminal_rect(self, instance, value):
+        num_steps = 300
+        # Choose a palette (e.g., Indigo)
+        start_hex = "#0c0a19"
+        end_hex = "#020204"
+
+        start_color = self.hex_to_rgb(start_hex)
+        end_color = self.hex_to_rgb(end_hex)
+
+        def interpolate_color(start, end, fraction):
+            return (
+                start[0] + (end[0] - start[0]) * fraction,
+                start[1] + (end[1] - start[1]) * fraction,
+                start[2] + (end[2] - start[2]) * fraction,
+                1,  # Alpha (opacity)
+            )
+
+        instance.canvas.before.clear()
+        with instance.canvas.before:
+            for i in range(num_steps):
+                fraction = i / (num_steps - 1)  # Calculate fraction
+                color = interpolate_color(start_color, end_color, fraction)
+                Color(*color)
+                Rectangle(
+                    pos=(
+                        instance.pos[0],
+                        instance.pos[1] + (instance.size[1] / num_steps) * i,
+                    ),
+                    size=(instance.size[0], instance.size[1] / num_steps),
+                )
+
+    def _create_gradient_texture(self):
+        """Generates a vertical gradient texture."""
+        width, height = 1, 64  # Small width, tall height for efficiency
+        data = np.zeros((height, width, 3), dtype=np.uint8)
+
+        # Define gradient colors
+        start_color = np.array([51, 102, 204])  # RGB (0.2, 0.4, 0.8) in 255 scale
+        end_color = np.array([204, 51, 153])  # RGB (0.8, 0.2, 0.6) in 255 scale
+
+        # Fill array with gradient effect
+        for y in range(height):
+            ratio = y / height  # Gradual transition factor
+            data[y, :] = (1 - ratio) * start_color + ratio * end_color
+
+        _texture = texture.texture_create(size=(width, height), colorfmt="rgb")
+        _texture.blit_buffer(data.tobytes(), colorfmt="rgb", bufferfmt="ubyte")
+        _texture.wrap = "clamp_to_edge"
+        _texture.mag_filter = "linear"
+
+        return _texture
 
     def _update_navbar_rect(self, instance, value):
         # Update the navbar background rectangle size and position
@@ -915,7 +1039,7 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
         # Dynamically add the file chooser to the layout
         print(f"Set filters: {_filters}")
         self.filechooser = FileChooserIconView(
-            path="/home/skye/Documents/", filters=_filters
+            path="/home/skye/Videos/", filters=_filters
         )
         self.filechooser.bind(
             selection=lambda instance, selection: self.selected(
@@ -1001,21 +1125,33 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
                 self.confirm.open()
 
                 file = self.selection[0]
-            finally:
+
                 # Bind the on_dismiss event to continue execution and invoke the callback
                 def on_dismiss_callback(instance):
                     if callback:
                         # Call the callback with the selected file
                         print("Calling callback..")
                         # (_) is a common convention in Python to indicate that the parameter is intentionally unused.
-                        Clock.schedule_once(
-                            lambda dt: threading.Thread(
-                                target=callback, args=(file,)
-                            ).start(),
-                            0.3,
-                        )
+                        try:
+                            if self.op_type == "Document":
+                                Clock.schedule_once(
+                                    lambda dt: threading.Thread(
+                                        target=callback, args=(file,)
+                                    ).start(),
+                                    0.3,
+                                )
+                            else:
+                                Clock.schedule_once(
+                                    lambda dt: threading.Thread(
+                                        target=callback, args=(file, self.output_format)
+                                    ).start(),
+                                    0.3,
+                                )
+                        except Exception:
+                            raise
                         Clock.schedule_once(lambda dt: self.reset_options(), 1)
 
+            finally:
                 ok_button.bind(on_release=on_dismiss_callback)
 
         else:
@@ -1043,11 +1179,161 @@ class Main(BoxLayout, MDScreen):  # Using FloatLayout for free positioning
             widget.font_size = new_font_size
 
 
+class TerminalInput(TextInput):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Define the complete initial prompt.
+        self.initial_prompt = "┌──(skye㉿kali)-[~]\n└─$"
+        self.prompt_marker = "└─$"
+        # Initialize with the prompt.
+        self.text = self.initial_prompt
+        # Compute the allowed edit start as the end of the last prompt line.
+        self.current_command_start = self._compute_current_command_start()
+        # Ensure the cursor is always in the allowed area.
+        self.bind(cursor=self._ensure_cursor)
+        # Monitor text changes to restore prompt integrity.
+        self.bind(text=self._ensure_prompt_integrity)
+        # Ensure our widget has a fixed minimum height (100) and expand as text grows.
+        self.height = 100
+        # Bind text and width changes to update the height
+        self.bind(text=self.update_height, width=self.update_height)
+        # Bind text and cursor updates to adjust the scroll position.
+        # self.bind(text=self._adjust_scroll, cursor=self._adjust_scroll)
+
+    def update_height(self, *args):
+        # Calculate available width for text, subtracting left and right padding.
+        if isinstance(self.padding, (list, tuple)):
+            left_pad = self.padding[0]
+            right_pad = self.padding[2] if len(self.padding) >= 3 else self.padding[0]
+        else:
+            left_pad = right_pad = self.padding
+
+        available_width = self.width - left_pad - right_pad
+
+        # Use CoreLabel to compute the rendered size of the text.
+        lbl = CoreLabel(
+            text=self.text,
+            font_name=self.font_name,
+            font_size=self.font_size,
+            text_size=(available_width, None),
+        )
+        lbl.refresh()  # Force the label to recalc its texture size
+        # Get the calculated text height and add vertical padding.
+        if isinstance(self.padding, (list, tuple)):
+            top_pad = self.padding[1] if len(self.padding) >= 2 else self.padding
+            bottom_pad = self.padding[3] if len(self.padding) >= 4 else self.padding
+        else:
+            top_pad = bottom_pad = self.padding
+
+        new_height = lbl.texture.size[1] + top_pad + bottom_pad
+
+        # Ensure height is never less than 100.
+        self.height = max(100, new_height)
+
+    def _compute_current_command_start(self):
+        """Return the absolute index immediately after the last prompt marker."""
+        idx = self.text.rfind(self.prompt_marker)
+        if idx != -1:
+            return idx + len(self.prompt_marker)
+        return len(self.text)
+
+    def get_cursor_index(self):
+        """
+        Convert the (col, row) cursor into an absolute index.
+        Splitting the text by newline to calculate.
+        """
+        lines = self.text.split("\n")
+        row, col = self.cursor
+        abs_index = 0
+        try:
+            for i in range(row):
+                abs_index += len(lines[i]) + 1  # add 1 for the newline
+            abs_index += col
+            return abs_index
+        except Exception:
+            return abs_index
+
+    def _get_row_col_from_index(self, index):
+        """
+        Convert an absolute index back to a (col, row) tuple.
+        """
+        lines = self.text.split("\n")
+        current = 0
+        for row, line in enumerate(lines):
+            if current + len(line) >= index:
+                col = index - current
+                return (col, row)
+            current += len(line) + 1  # +1 for the newline
+        # Fallback: return end-of-text position.
+        return (len(lines[-1]), len(lines) - 1)
+
+    def _ensure_cursor(self, instance, value):
+        """
+        Force the cursor to stay in the allowed region (after current_command_start).
+        """
+        idx = self.get_cursor_index()
+        if idx < self.current_command_start:
+            self.cursor = self._get_row_col_from_index(self.current_command_start)
+
+    def insert_text(self, substring, from_undo=False):
+        """
+        Override insertion: if the cursor is before current_command_start, force it to the allowed spot.
+        Wrap the insertion in a try/except to avoid internal index errors.
+        """
+        # Make sure current_command_start is not beyond the current text.
+        if self.current_command_start > len(self.text):
+            self.current_command_start = len(self.text)
+        idx = self.get_cursor_index()
+        if idx < self.current_command_start:
+            self.cursor = self._get_row_col_from_index(self.current_command_start)
+        try:
+            return super().insert_text(substring, from_undo)
+        except IndexError:
+            # Fallback: force the cursor to the end and try again.
+            self.cursor = self._get_row_col_from_index(len(self.text))
+            return super().insert_text(substring, from_undo)
+
+    def do_backspace(self, from_undo=False, mode="bkspc"):
+        """
+        Override backspace: prevent deletion of characters before current_command_start.
+        """
+        idx = self.get_cursor_index()
+        if idx <= self.current_command_start:
+            return  # Do nothing if at or before the prompt.
+        return super().do_backspace(from_undo, mode)
+
+    def _ensure_prompt_integrity(self, instance, value):
+        """
+        Ensure that the text always starts with the initial prompt and update the allowed insertion index.
+        """
+        # Restore initial prompt if missing.
+        if not self.text.startswith(self.initial_prompt):
+            self.text = self.initial_prompt + self.text[self.current_command_start :]
+        # Recompute allowed insertion index.
+        new_start = self._compute_current_command_start()
+        if new_start != self.current_command_start:
+            self.current_command_start = new_start
+        # Make sure current_command_start does not exceed text length.
+        if self.current_command_start > len(self.text):
+            self.current_command_start = len(self.text)
+        # Force the cursor into the allowed region.
+        if self.get_cursor_index() < self.current_command_start:
+            self.cursor = self._get_row_col_from_index(self.current_command_start)
+
+    def _adjust_scroll(self, *args):
+        """
+        Force the text view to scroll so that new text is visible.
+        For TextInput, setting scroll_y to 0 shows the bottom of the text.
+        """
+        # Scheduling ensures that the update occurs after the layout is recalculated.
+        Clock.schedule_once(lambda dt: setattr(self, "scroll_y", 0), 0)
+
+
 class Fileconverter(MDApp):
     def build(self):
         # Set the window icon (the image should be in the same directory or specify the full path)
         # Use an image in .png format (ideally a square image like 64x64 or 128x128
-        Window.set_icon("transaction.png")
+        Window.set_icon("../src/icons/transaction.png")
         # Change the cursor to "wait" when starting the task
         Window.set_system_cursor("wait")
         # Loader.loading_image = 'Double Ring@1x-1.0s-200px-200px.zip'
